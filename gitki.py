@@ -178,6 +178,7 @@ class Gitki:
             xhtml.body(
                 xhtml.h1(xhtml(title)),
                 xhtml.div(body),
+                xhtml.footer('Powered by Gitki'),
             ),
         )
 
