@@ -1,0 +1,10 @@
+# Python ignores
+*.pyc
+__pycache__
+*.egg-info
+
+# Common editor ignores
+\#*\#
+*~
+*.swp
+.vscode
