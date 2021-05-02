@@ -1,3 +1,4 @@
+import ansi2html
 import flask
 import pathlib
 import subprocess
@@ -60,6 +61,28 @@ def git_reset(index, revision):
                    check=True)
 
 
+def git_log(index, revision='HEAD', path=None, numstat=False, format='%H%n'):
+    args = ['git', '-C', index, 'log', '--format=tformat:{}'.format(format)]
+    if numstat:
+        args.append('--numstat')
+    args.append(revision)
+    if path:
+        args.append('--')
+        args.append(path)
+    result = subprocess.run(args, check=True, stdout=subprocess.PIPE,
+                            encoding='utf-8', errors='replace')
+    return result.stdout
+
+
+def make_table(rows, headers=None):
+    fmt_rows = []
+    if headers:
+        fmt_rows.append(xhtml.tr(*map(xhtml.th, headers)))
+    for row in rows:
+        fmt_rows.append(xhtml.tr(*map(xhtml.td, row)))
+    return xhtml.table(*fmt_rows)
+
+
 class GitWorktree(tempfile.TemporaryDirectory):
     def __init__(self, repo, *args, revision='HEAD', **kwargs):
         self.repo = repo
@@ -103,9 +126,26 @@ class Gitki:
 
     def render_page(self, name, revision='HEAD'):
         page_raw = self.get_contents_at_revision('{}.txt'.format(name),
-                                                 revision='HEAD')
+                                                 revision=revision)
 
         return name, gitkitext.to_html(gitkitext.parse(page_raw))
+
+    def history(self, name, revision='HEAD'):
+        log = iter(git_log(self.repo, revision=revision, path=name,
+                           format='%H%n%cr%n%aN <%aE>%n%s', numstat=True)
+                   .splitlines())
+        while True:
+            try:
+                rev = next(log).rstrip()
+            except StopIteration:
+                return
+            time = next(log).rstrip()
+            author = next(log).rstrip()
+            subject = next(log).rstrip()
+            blank = next(log)
+            insertions, deletions, *files = next(log).split()
+
+            yield rev, time, author, subject, int(insertions), int(deletions)
 
     def worktree(self, revision='HEAD'):
         return GitWorktree(self.repo, revision=revision)
@@ -130,6 +170,16 @@ class Gitki:
             # Next, submit into the main index
             git_cherry_pick(self.repo, new_rev)
 
+    def template(self, title, body):
+        return xhtml.html(
+            xhtml.head(
+                xhtml.title(xhtml(title)),
+            ),
+            xhtml.body(
+                xhtml.h1(xhtml(title)),
+                xhtml.div(body),
+            ),
+        )
 
 def build_app(config):
     app = flask.Flask(__name__)
@@ -158,8 +208,8 @@ def build_app(config):
             page_contents = ''
             default_message = 'Created new page {}'.format(name)
 
-        return xhtml.body(
-            xhtml.h1('Editing ', name),
+        return gitki.template(
+            'Editing {}'.format(name),
             xhtml.form(
                 xhtml.input(type='hidden', name='revision', value=revision),
                 xhtml.textarea(page_contents, name='contents',
@@ -189,10 +239,71 @@ def build_app(config):
                            xhtml.a('create it?',
                                    href=flask.url_for('edit', name=name))))
 
-        page_contents = xhtml.body(
-            xhtml.h1(header, ' ',
-                     xhtml.a('[edit]', href=flask.url_for('edit', name=name))),
-            body)
-        return page_contents
+        return gitki.template(
+            header,
+            xhtml.div(
+                xhtml.div(
+                    xhtml.a('[edit]',
+                            href=flask.url_for('edit', name=name)),
+                    xhtml.a('[history]',
+                            href=flask.url_for('history', name=name)),
+                ),
+                body))
+
+    @app.route('/diff/<rev>', methods=['GET'])
+    def diff(rev):
+        try:
+            result = subprocess.run(
+                ['git', '-C', gitki.repo, 'show', '--color=always', rev],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True,
+                encoding='utf-8', errors='replace')
+        except subprocess.CalledProcessError:
+            flask.abort(404, 'Unknown revision.')
+        converter = ansi2html.Ansi2HTMLConverter(
+            dark_bg=False,
+            inline=True,
+            scheme='osx',
+        )
+        html = converter.convert(result.stdout)
+        # ugly ... :(
+        html = html.replace('#AAAAAA', '#FFFFFF', 1)
+        return gitki.template('Diff Output', html)
+
+    @app.route('/page/<name>/history', methods=['GET'])
+    def history(name):
+        rows = []
+        for revision, time, author, subject, cins, cdel in gitki.history(
+                '{}.txt'.format(name)):
+            changes = '+{} -{}'.format(cins, cdel)
+            rows.append([
+                xhtml.span(
+                    xhtml.a(
+                        revision[:6],
+                        href=(flask.url_for('page', name=name)
+                              + '?revision={}'.format(revision))),
+                    ' ',
+                    xhtml.a('[diff]', href=flask.url_for('diff', rev=revision)),
+                ),
+                xhtml(time),
+                xhtml(author),
+                xhtml(subject),
+                xhtml(changes),
+            ])
+
+        return gitki.template(
+            '{} History'.format(name),
+            xhtml.div(
+                xhtml.div(
+                    xhtml.a(
+                        '[Back to page]',
+                        href=flask.url_for('page', name=name),
+                    ),
+                ),
+                make_table(
+                    rows,
+                    headers=('Revision', 'Commit Time', 'Author',
+                             'Description', 'Delta')),
+            ),
+        )
 
     return app
