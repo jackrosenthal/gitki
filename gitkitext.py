@@ -15,6 +15,7 @@ token_p = re.compile(r'''
 
 
 def tokenize(text):
+    text = text.replace('\r', '')
     for m in token_p.finditer(text):
         d = {k: v for k, v in m.groupdict().items() if v is not None}
         typename, source = d.popitem()
@@ -116,3 +117,90 @@ def to_html(parse_result, dialect='xhtml', url_for=flask.url_for):
         raise ValueError('Unknown part type: {}'.format(part_type))
 
     return html_builder.div(*(part_to_html(part) for part in parse_result))
+
+
+def unparse(parse_result, cols=79):
+    """Take a parse result and turn it back into well-formatted text."""
+    flushpar = object()
+    flushsent = object()
+
+    def unparse_flat(parts):
+        formatted = []
+        for part in parts:
+            for unparsed in unparse_part(part):
+                if unparsed is not flushsent:
+                    formatted.append(unparsed)
+        return ' '.join(formatted)
+
+    def unparse_link(uri, link_text_parts):
+        link_text = unparse_flat(link_text_parts)
+        if uri == link_text:
+            return '<{}>'.format(uri)
+        return '<{}|{}>'.format(uri, link_text)
+
+    def unparse_part(part):
+        part_type, *args = part
+        if part_type == 'Text':
+            for word in args[0].split():
+                yield word
+                word = word.rstrip('"')
+                word = word.rstrip("'")
+                word = word.rstrip(')')
+                if len(word) > 1 and word[:-1].lower() not in (
+                        'mr', 'mrs', 'ms', 'dr', 'st', 'pf'):
+                    for punc in ('.', '?', '!'):
+                        if word.endswith(punc):
+                            yield flushsent
+        elif part_type == 'InternalLink':
+            yield unparse_link(*args)
+        elif part_type == 'ExternalLink':
+            yield unparse_link(*args)
+        elif part_type == 'Header':
+            yield flushpar
+            yield ':: {}'.format(unparse_flat(args[0]))
+        elif part_type == 'Par':
+            yield flushpar
+            for part in args[0]:
+                yield from unparse_part(part)
+        else:
+            raise ValueError('Unknown part type: {}'.format(part_type))
+
+    paragraphs = [[]]
+
+    for part in parse_result:
+        for unparsed in unparse_part(part):
+            if unparsed is flushpar:
+                if paragraphs[-1]:
+                    paragraphs.append([])
+                continue
+            paragraphs[-1].append(unparsed)
+
+    # Remove an extra paragraph at the end, if there was one.
+    if not paragraphs[-1]:
+        paragraphs.pop()
+
+    def format_paragraph(pieces):
+        sentence_flush = False
+        lines = ['']
+        for piece in pieces:
+            if piece is flushsent:
+                sentence_flush = True
+                continue
+            if not lines[-1]:
+                # Always have to put it here!
+                lines[-1] = piece
+                continue
+            sep_width = 2 if sentence_flush else 1
+            if len(lines[-1]) + sep_width + len(piece) <= cols:
+                lines[-1] += (' ' * sep_width) + piece
+            else:
+                lines.append(piece)
+            sentence_flush = False
+
+        return ''.join(line + '\n' for line in lines)
+
+    return '\n'.join(format_paragraph(p) for p in paragraphs)
+
+
+def reformat(text):
+    return unparse(parse(text))

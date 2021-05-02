@@ -191,8 +191,9 @@ def build_app(config):
     @app.route('/page/<name>/edit', methods=['POST'])
     def edit_submit(name):
         author = ('Alyssa P. Hacker', 'aphacker@example.org')
+        contents = gitkitext.reformat(flask.request.form.get('contents'))
         gitki.update_file('{}.txt'.format(name),
-                          author, flask.request.form.get('contents'),
+                          author, contents,
                           revision=flask.request.form.get('revision'),
                           message=flask.request.form.get('message'))
         return flask.redirect(flask.url_for('page', name=name))
