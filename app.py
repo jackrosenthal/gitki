@@ -1,5 +1,5 @@
 import flask
-import gitki
+import gitki.gitki as gitki
 import yaml
 
 with open('devserver.yaml') as f:

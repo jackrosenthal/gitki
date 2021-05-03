@@ -4,7 +4,7 @@ import pathlib
 import subprocess
 import tempfile
 
-import gitkitext
+import gitki.gitkitext as gitki
 from werkzeug.utils import xhtml
 
 
