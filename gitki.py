@@ -178,7 +178,10 @@ class Gitki:
             xhtml.body(
                 xhtml.h1(xhtml(title)),
                 xhtml.div(body),
-                xhtml.footer('Powered by Gitki'),
+                xhtml.footer(
+                    'Powered by Gitki ',
+                    xhtml.a('[preferences]', href=flask.url_for('preferences')),
+                ),
             ),
         )
 
@@ -188,9 +191,90 @@ def build_app(config):
 
     gitki = Gitki(app.config['GITKI_HOME'])
 
+    @app.route('/preferences', methods=['POST'])
+    def preferences_save():
+        author_name = flask.request.form.get('gitki_author_name')
+        if not author_name:
+            return flask.redirect(flask.url_for('preferences'))
+
+        author_email = flask.request.form.get('gitki_author_email', '')
+        if len(author_email) < 3 or author_email.count('@') != 1:
+            return flask.redirect(flask.url_for('preferences'))
+
+        edit = flask.request.form.get('edit')
+        if edit:
+            response = flask.redirect(flask.url_for('edit', name=edit))
+        else:
+            response = flask.redirect(flask.url_for('page', name='FrontPage'))
+
+        response.set_cookie('gitki_author_name', author_name)
+        response.set_cookie('gitki_author_email', author_email)
+        return response
+
+    @app.route('/preferences', methods=['GET'])
+    def preferences():
+        def input_options_from_cookie(cookie):
+            value = flask.request.cookies.get(cookie)
+            options = {'name': cookie}
+            if value:
+                options['value'] = value
+            return options
+
+        edit = flask.request.args.get('edit')
+        if edit:
+            edit_input = xhtml.input(
+                type='hidden',
+                name='edit',
+                value=edit)
+            edit_message = xhtml.div(
+                'You must set author information before editing a page.')
+        else:
+            edit_input = ''
+            edit_message = ''
+
+        return gitki.template(
+            'Gitki Preferences',
+            xhtml.div(
+                edit_message,
+                xhtml.form(
+                    edit_input,
+                    xhtml.div(
+                        xhtml.h2('Git Author'),
+                        xhtml.div(
+                            xhtml.label('Full Name'),
+                            xhtml.input(
+                                type='text',
+                                **input_options_from_cookie(
+                                    'gitki_author_name')),
+                        ),
+                        xhtml.div(
+                            xhtml.label('Email Address'),
+                            xhtml.input(
+                                type='email',
+                                **input_options_from_cookie(
+                                    'gitki_author_email')),
+                        ),
+                    ),
+                    xhtml.button(
+                        'Save Preferences',
+                        type='submit'),
+                    method='POST',
+                    action=flask.url_for('preferences_save'),
+                ),
+            ),
+        )
+
     @app.route('/page/<name>/edit', methods=['POST'])
     def edit_submit(name):
-        author = ('Alyssa P. Hacker', 'aphacker@example.org')
+        author_name = flask.request.form.get('author_name')
+        author_email = flask.request.form.get('author_email', '')
+
+        if (author_name and len(author_email) >= 3
+                and author_email.count('@') == 1):
+            author = (author_name, author_email)
+        else:
+            return flask.abort(403, 'Unable to edit without author info')
+
         contents = gitkitext.reformat(flask.request.form.get('contents'))
         gitki.update_file('{}.txt'.format(name),
                           author, contents,
@@ -201,6 +285,13 @@ def build_app(config):
     @app.route('/page/<name>/edit', methods=['GET'])
     def edit(name):
         revision = flask.request.args.get('revision', gitki.index_head)
+
+        author_name = flask.request.cookies.get('gitki_author_name')
+        author_email = flask.request.cookies.get('gitki_author_email', '')
+        if (not author_name or len(author_email) < 3
+                or author_email.count('@') != 1):
+            return flask.redirect(flask.url_for('preferences')
+                                  + '?edit={}'.format(name))
 
         try:
             page_contents = gitki.get_contents_at_revision(
@@ -214,8 +305,14 @@ def build_app(config):
             'Editing {}'.format(name),
             xhtml.form(
                 xhtml.input(type='hidden', name='revision', value=revision),
+                xhtml.input(type='hidden', name='author_name',
+                            value=author_name),
+                xhtml.input(type='hidden', name='author_email',
+                            value=author_email),
                 xhtml.textarea(page_contents, name='contents',
                                rows='48', cols='80'),
+                xhtml.div(xhtml(
+                    'Editing as {} <{}>'.format(author_name, author_email))),
                 xhtml.div(
                     xhtml.label('Describe your changes'),
                     xhtml.input(type='text', name='message',
