@@ -78,6 +78,9 @@ def parse(text):
                 _, span = stack.pop()
                 _, header = stack.pop()
                 stack.append(('Header', header + span))
+            elif match('Header', 'Newline'):
+                stack.pop()
+                stack.append(('Par', ()))
             elif match('BlankLine'):
                 stack.pop()
                 stack.append(('Par', ()))
