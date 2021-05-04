@@ -12,11 +12,29 @@ class NotFoundError(Exception):
     pass
 
 
+def git_dir(path):
+    result = subprocess.run(
+        ['git', '-C', path, 'rev-parse', '--absolute-git-dir'],
+        stdout=subprocess.PIPE, check=True, encoding='utf-8')
+    return pathlib.Path(result.stdout)
+
+
+def git_init(path, default_branch='main'):
+    path = pathlib.Path(path)
+    if not path.is_dir():
+        path.mkdir(parents=True)
+
+    subprocess.run(
+        ['git', '-C', path,
+         '-c', 'init.defaultBranch={}'.format(default_branch), 'init'],
+        check=True)
+
+
 def git_index_head(index):
-        result = subprocess.run(
-            ['git', '-C', index, 'log', '-n1', '--format=%H'],
-            stdout=subprocess.PIPE, check=True, encoding='utf-8')
-        return result.stdout.rstrip()
+    result = subprocess.run(
+        ['git', '-C', index, 'log', '-n1', '--format=%H'],
+        stdout=subprocess.PIPE, check=True, encoding='utf-8')
+    return result.stdout.rstrip()
 
 
 def git_stage_changes(index, path, contents):
@@ -107,6 +125,10 @@ class GitWorktree(tempfile.TemporaryDirectory):
 class Gitki:
     def __init__(self, repo):
         self.repo = pathlib.Path(repo)
+        try:
+            git_dir(self.repo)
+        except subprocess.CalledProcessError:
+            git_init(self.repo)
 
     @property
     def index_head(self):
